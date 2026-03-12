@@ -62,8 +62,13 @@ class Monitor:
             key = "cpu"
             if pct > 80 and key not in self._alerted:
                 self._alerted.add(key)
+                from agent import ask
+                diagnosis = await ask(
+                    f"CPU load is at {pct:.0f}% (load avg {load_1m:.2f} across {cores} cores). "
+                    "Check which processes are responsible and briefly explain what's happening."
+                )
                 await self.send(
-                    f"⚠️ *High CPU*: {pct:.0f}% (load {load_1m:.2f} across {cores} cores)"
+                    f"⚠️ *High CPU*: {pct:.0f}% (load {load_1m:.2f} / {cores} cores)\n\n{diagnosis}"
                 )
             elif pct <= 70 and key in self._alerted:
                 self._alerted.discard(key)
@@ -89,7 +94,12 @@ class Monitor:
                 key = f"disk:{mount}"
                 if pct > 90 and key not in self._alerted:
                     self._alerted.add(key)
-                    await self.send(f"⚠️ *Disk almost full*: `{mount}` is at {pct}%")
+                    from agent import ask
+                    diagnosis = await ask(
+                        f"Disk partition `{mount}` is at {pct}% capacity. "
+                        "Check what's using the most space and suggest what can be cleaned up."
+                    )
+                    await self.send(f"⚠️ *Disk almost full*: `{mount}` at {pct}%\n\n{diagnosis}")
                 elif pct <= 80 and key in self._alerted:
                     self._alerted.discard(key)
                     await self.send(f"✅ *Disk back to normal*: `{mount}` is at {pct}%")

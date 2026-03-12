@@ -20,6 +20,10 @@ from tools import restart_docker_container, get_docker_cleanup_preview, docker_p
 
 logger = logging.getLogger(__name__)
 
+# Per-chat conversation history (chat_id → message list)
+_chat_history: dict[int, list] = {}
+HISTORY_MAX = 20  # messages (10 turns)
+
 TELEGRAM_MAX_LENGTH = 4096  # Telegram's message length limit
 
 
@@ -68,6 +72,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /docker           — Docker containers\n"
         "  /restart <name>   — restart a container\n"
         "  /cleanup          — free Docker disk space\n"
+        "  /backup           — backup data to SSD\n"
+        "  /temps            — CPU/GPU temperatures\n"
+        "  /top              — top processes\n"
+        "  /disk             — disk usage breakdown\n"
         "  /network          — devices on the network\n"
         "  /ports            — exposed ports\n"
         "  /help             — this message\n\n"
@@ -149,6 +157,40 @@ async def cmd_ports(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send(update, response)
 
 
+async def cmd_temps(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update):
+        return
+    response = await ask("Report CPU and GPU temperatures and any throttling issues.")
+    await send(update, response)
+
+
+async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update):
+        return
+    response = await ask("Show the top processes by CPU and memory usage right now.")
+    await send(update, response)
+
+
+async def cmd_disk(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update):
+        return
+    response = await ask("Show disk usage: partition breakdown and which directories are using the most space.")
+    await send(update, response)
+
+
+async def cmd_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update):
+        return
+    keyboard = [[
+        InlineKeyboardButton("✅ Yes, back up now", callback_data="backup:confirm"),
+        InlineKeyboardButton("❌ Cancel", callback_data="cancel"),
+    ]]
+    await update.message.reply_text(
+        "Back up Pi data (docker-services + pi-agent) to the SSD?",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
 async def cmd_cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not authorized(update):
         return
@@ -178,6 +220,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Cancelled.")
         return
 
+    if query.data == "backup:confirm":
+        await query.edit_message_text("💾 Backing up to SSD…")
+        from tools import run_backup
+        result = run_backup()
+        await query.edit_message_text(result)
+        return
+
     if query.data.startswith("restart:"):
         container = query.data[8:]
         await query.edit_message_text(f"Restarting `{container}`…", parse_mode="Markdown")
@@ -204,10 +253,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_text:
         return
 
+    chat_id = update.effective_chat.id
+    history = _chat_history.get(chat_id, [])
+
     await update.message.reply_text("Thinking…")
     try:
-        response = await ask(user_text)
+        response = await ask(user_text, history=history)
         await send(update, response)
+
+        # Store exchange and trim to HISTORY_MAX messages
+        history = history + [
+            {"role": "user", "content": user_text},
+            {"role": "assistant", "content": response},
+        ]
+        _chat_history[chat_id] = history[-HISTORY_MAX:]
     except Exception as e:
         logger.exception("Agent error")
         await update.message.reply_text(f"Error: {e}")
@@ -234,6 +293,10 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("docker", cmd_docker))
     app.add_handler(CommandHandler("restart", cmd_restart))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
+    app.add_handler(CommandHandler("backup", cmd_backup))
+    app.add_handler(CommandHandler("temps", cmd_temps))
+    app.add_handler(CommandHandler("top", cmd_top))
+    app.add_handler(CommandHandler("disk", cmd_disk))
     app.add_handler(CommandHandler("network", cmd_network))
     app.add_handler(CommandHandler("ports", cmd_ports))
     app.add_handler(CallbackQueryHandler(callback_handler))

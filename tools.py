@@ -3,6 +3,7 @@ Tool definitions for the Pi agent.
 Runs commands locally via subprocess (no SSH needed — this runs on the Pi itself).
 """
 
+import os
 import subprocess
 import urllib.request
 from typing import Tuple
@@ -245,6 +246,26 @@ TOOL_SCHEMAS = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
+        "name": "get_temperatures",
+        "description": "Get CPU and GPU temperatures and throttling status (Raspberry Pi).",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_top_processes",
+        "description": "Get the top 10 processes by CPU usage and top 10 by memory usage.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_disk_breakdown",
+        "description": "Get disk partition usage and per-directory size breakdown for key paths.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "run_backup",
+        "description": "Backup Pi data (docker-services and pi-agent) to the SSD using rsync.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
         "name": "run_command",
         "description": (
             "Run a shell command on the Pi. Only safe read-only commands "
@@ -259,6 +280,83 @@ TOOL_SCHEMAS = [
         },
     },
 ]
+
+
+def get_temperatures() -> str:
+    results = []
+    stdout, _, rc = _run("vcgencmd measure_temp 2>/dev/null")
+    if rc == 0 and stdout.strip():
+        results.append(f"GPU: {stdout.strip()}")
+    stdout, _, _ = _run("cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null")
+    if stdout.strip():
+        for i, t in enumerate(stdout.strip().splitlines()):
+            try:
+                results.append(f"CPU zone {i}: {int(t) / 1000:.1f}°C")
+            except ValueError:
+                pass
+    stdout, _, rc = _run("vcgencmd get_throttled 2>/dev/null")
+    if rc == 0 and stdout.strip():
+        results.append(f"Throttle status: {stdout.strip()}")
+        try:
+            val = int(stdout.strip().split("=")[1], 16)
+            flags = []
+            if val & 0x1: flags.append("under-voltage")
+            if val & 0x2: flags.append("arm freq capped")
+            if val & 0x4: flags.append("currently throttled")
+            if val & 0x8: flags.append("soft temp limit active")
+            if flags:
+                results.append(f"⚠️ Active flags: {', '.join(flags)}")
+        except Exception:
+            pass
+    return "\n".join(results) if results else "Temperature data not available."
+
+
+def get_top_processes() -> str:
+    results = []
+    stdout, _, _ = _run("ps aux --sort=-%cpu | head -11")
+    results.append("=== Top by CPU ===\n" + stdout.strip())
+    stdout, _, _ = _run("ps aux --sort=-%mem | head -11")
+    results.append("=== Top by Memory ===\n" + stdout.strip())
+    return "\n\n".join(results)
+
+
+def get_disk_breakdown() -> str:
+    results = []
+    stdout, _, _ = _run("df -h")
+    results.append("=== Partitions ===\n" + stdout.strip())
+    breakdown = []
+    for path in ["/home", "/var/lib/docker", "/var/log", "/tmp", "/root"]:
+        stdout, _, rc = _run(f"du -sh {path} 2>/dev/null")
+        if rc == 0 and stdout.strip():
+            breakdown.append(stdout.split()[0] + f"  {path}")
+    if breakdown:
+        results.append("=== Directory sizes ===\n" + "\n".join(breakdown))
+    return "\n\n".join(results)
+
+
+def run_backup() -> str:
+    dest_root = os.getenv("BACKUP_DEST", "/mnt/ssd/pi-backup")
+    sources_raw = os.getenv("BACKUP_SOURCES", "/home/pi/docker-services,/home/pi/pi-agent")
+    sources = [s.strip() for s in sources_raw.split(",") if s.strip()]
+
+    stdout, _, _ = _run(f"test -d {dest_root} && echo ok")
+    if "ok" not in stdout:
+        return f"❌ Backup destination not found: `{dest_root}`\nMake sure the SSD is mounted and set BACKUP_DEST in .env"
+
+    from datetime import datetime
+    dest = f"{dest_root}/{datetime.now().strftime('%Y-%m-%d_%H-%M')}"
+    _run(f"mkdir -p {dest}")
+
+    results = []
+    for src in sources:
+        stdout, stderr, rc = _run(f"rsync -a --delete {src} {dest}/", timeout=300)
+        name = src.rstrip("/").split("/")[-1]
+        if rc == 0:
+            results.append(f"✅ {name}")
+        else:
+            results.append(f"❌ {name}: {(stderr or stdout).strip()[:200]}")
+
+    return f"Backup → `{dest}`\n" + "\n".join(results)
 
 
 def get_docker_cleanup_preview() -> str:
@@ -347,6 +445,14 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
             return get_logs(tool_input["source"], tool_input.get("lines", 50))
         case "run_command":
             return run_command(tool_input["command"])
+        case "get_temperatures":
+            return get_temperatures()
+        case "get_top_processes":
+            return get_top_processes()
+        case "get_disk_breakdown":
+            return get_disk_breakdown()
+        case "run_backup":
+            return run_backup()
         case "get_docker_logs_filtered":
             return get_docker_logs_filtered(tool_input["container"], tool_input.get("lines", 200))
         case "get_network_devices":
