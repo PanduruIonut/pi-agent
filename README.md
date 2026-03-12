@@ -51,7 +51,7 @@ Alerts auto-resolve — you get a follow-up message when things recover.
 
 **Smarter alerts** — when CPU or disk thresholds are breached, Claude automatically diagnoses the root cause and includes an explanation in the alert message.
 
-**Daily summary** is sent at 8am by default (configurable via `SUMMARY_HOUR`, disable with `DAILY_SUMMARY_ENABLED=false`).
+**Daily summary** is disabled by default. Enable with `DAILY_SUMMARY_ENABLED=true` and configure the hour via `SUMMARY_HOUR` (default: 8am).
 
 ---
 
@@ -117,9 +117,9 @@ API_HOST=0.0.0.0
 API_PORT=9000
 API_KEY=your_secret_key
 
-# Daily summary (disable with DAILY_SUMMARY_ENABLED=false)
+# Daily summary (set DAILY_SUMMARY_ENABLED=true to enable)
 SUMMARY_HOUR=8
-DAILY_SUMMARY_ENABLED=true
+DAILY_SUMMARY_ENABLED=false
 
 # Backup — SSD mount point and source directories
 BACKUP_DEST=/mnt/ssd/pi-backup
