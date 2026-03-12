@@ -73,7 +73,10 @@ async def main():
     else:
         logger.warning("TELEGRAM_BOT_TOKEN not set — Telegram bot disabled")
 
-    tasks.append(asyncio.create_task(run_api()))
+    if os.getenv("API_ENABLED", "true").lower() != "false":
+        tasks.append(asyncio.create_task(run_api()))
+    else:
+        logger.info("Web API disabled (API_ENABLED=false)")
 
     try:
         await asyncio.gather(*tasks)
