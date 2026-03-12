@@ -7,9 +7,10 @@ Powered by [Claude](https://anthropic.com) (Anthropic) running directly on the P
 ## Features
 
 - **Telegram bot** — ask anything in natural language, use built-in commands
-- **REST API** — query programmatically from any device on your network
-- **Proactive alerts** — get notified automatically when something goes wrong
-- **Daily summary** — scheduled report every morning
+- **Conversation history** — follow-up questions work ("which one is using the most?", "restart that one")
+- **REST API** — query programmatically from any device on your network (optional, can be disabled)
+- **Proactive alerts** — notified automatically with AI diagnosis when something goes wrong
+- **Daily summary** — scheduled report every morning (optional)
 - **Runs on the Pi** — installs as a systemd service, starts on boot
 - **AI-powered** — Claude reasons about what to check and interprets the results
 - **Allowlisted commands** — only safe, read-only shell commands permitted by default
@@ -23,6 +24,11 @@ Powered by [Claude](https://anthropic.com) (Anthropic) running directly on the P
 | `/status` | Full system report (info, resources, Docker) |
 | `/docker` | Docker container overview with resource usage |
 | `/restart <name>` | Restart a container (asks for confirmation first) |
+| `/cleanup` | Free Docker disk space (dangling or all unused) |
+| `/backup` | Rsync docker-services + pi-agent to SSD |
+| `/temps` | CPU/GPU temperatures and throttle status |
+| `/top` | Top processes by CPU and memory |
+| `/disk` | Disk partition usage and directory breakdown |
 | `/network` | Devices connected to your LAN + public IP |
 | `/ports` | All listening ports with process names |
 | `/help` | Show available commands |
@@ -43,11 +49,15 @@ The monitor runs every 60 seconds in the background and messages you when:
 
 Alerts auto-resolve — you get a follow-up message when things recover.
 
-**Daily summary** is sent at 8am by default (configurable via `SUMMARY_HOUR`).
+**Smarter alerts** — when CPU or disk thresholds are breached, Claude automatically diagnoses the root cause and includes an explanation in the alert message.
+
+**Daily summary** is sent at 8am by default (configurable via `SUMMARY_HOUR`, disable with `DAILY_SUMMARY_ENABLED=false`).
 
 ---
 
 ## REST API
+
+Disabled by default. Enable by setting `API_ENABLED=true` in `.env`.
 
 All endpoints require the `X-API-Key` header.
 
@@ -101,12 +111,19 @@ ANTHROPIC_API_KEY=sk-ant-...
 TELEGRAM_BOT_TOKEN=123456:ABC...
 TELEGRAM_ALLOWED_CHAT_IDS=123456789
 
+# Web API (disabled by default)
+API_ENABLED=false
 API_HOST=0.0.0.0
 API_PORT=9000
 API_KEY=your_secret_key
 
-# Hour of day (0-23) to send the daily summary (default: 8am)
+# Daily summary (disable with DAILY_SUMMARY_ENABLED=false)
 SUMMARY_HOUR=8
+DAILY_SUMMARY_ENABLED=true
+
+# Backup — SSD mount point and source directories
+BACKUP_DEST=/mnt/ssd/pi-backup
+BACKUP_SOURCES=/home/pi/docker-services,/home/pi/pi-agent
 ```
 
 ### Run as a systemd service
@@ -148,6 +165,9 @@ pi-agent/
 |---|---|
 | System info | Hostname, OS, kernel, CPU, temperature |
 | Resource usage | RAM, CPU load, top processes, disk space |
+| Temperatures | CPU/GPU temps and Pi throttle status |
+| Top processes | Top 10 by CPU and memory |
+| Disk breakdown | Partition usage + per-directory sizes |
 | Docker status | All containers, per-container CPU/mem/net |
 | Docker logs (filtered) | Errors, warnings, and exceptions only |
 | Service status | Any systemd service |
@@ -155,6 +175,7 @@ pi-agent/
 | Network devices | ARP scan of local network |
 | Exposed ports | Listening ports with process names |
 | Public IP | Current external IP address |
+| Backup | Rsync sources to SSD |
 | Run command | Shell commands from the allowlist |
 
 ---

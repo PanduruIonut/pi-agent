@@ -162,6 +162,8 @@ class Monitor:
 
     async def _check_daily_summary(self):
         try:
+            if os.getenv("DAILY_SUMMARY_ENABLED", "true").lower() == "false":
+                return
             now = datetime.now()
             summary_hour = int(os.getenv("SUMMARY_HOUR", "8"))
             today = now.date()
