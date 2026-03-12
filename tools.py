@@ -261,6 +261,31 @@ TOOL_SCHEMAS = [
 ]
 
 
+def get_docker_cleanup_preview() -> str:
+    stdout, _, _ = _run("docker system df")
+    return stdout.strip()
+
+
+def docker_prune_dangling() -> str:
+    results = []
+    for cmd, label in [
+        ("docker container prune -f", "Stopped containers"),
+        ("docker image prune -f", "Dangling images"),
+        ("docker network prune -f", "Unused networks"),
+        ("docker builder prune -f", "Build cache"),
+    ]:
+        stdout, stderr, rc = _run(cmd)
+        results.append(f"{label}: {'OK' if rc == 0 else 'error — ' + stderr.strip()}\n{stdout.strip()}")
+    return "\n\n".join(results)
+
+
+def docker_prune_all() -> str:
+    stdout, stderr, rc = _run("docker system prune -a -f")
+    if rc != 0:
+        return f"Error: {stderr.strip()}"
+    return stdout.strip()
+
+
 def restart_docker_container(container_name: str) -> str:
     # Verify container exists first
     stdout, _, rc = _run(f"docker ps -a --format '{{{{.Names}}}}' | grep -x '{container_name}'")

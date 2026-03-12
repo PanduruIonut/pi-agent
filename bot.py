@@ -16,7 +16,7 @@ import subprocess
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from agent import ask
-from tools import restart_docker_container
+from tools import restart_docker_container, get_docker_cleanup_preview, docker_prune_dangling, docker_prune_all
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  /status           — system overview\n"
         "  /docker           — Docker containers\n"
         "  /restart <name>   — restart a container\n"
+        "  /cleanup          — free Docker disk space\n"
         "  /network          — devices on the network\n"
         "  /ports            — exposed ports\n"
         "  /help             — this message\n\n"
@@ -148,6 +149,27 @@ async def cmd_ports(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send(update, response)
 
 
+async def cmd_cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update):
+        return
+    usage = get_docker_cleanup_preview()
+    keyboard = [
+        [
+            InlineKeyboardButton("🧹 Dangling only", callback_data="cleanup:dangling"),
+            InlineKeyboardButton("🗑️ All unused", callback_data="cleanup:all"),
+        ],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+    ]
+    await update.message.reply_text(
+        f"*Docker disk usage:*\n```\n{usage}\n```\n\n"
+        "Choose cleanup scope:\n"
+        "• *Dangling only* — stopped containers, dangling images, unused networks, build cache\n"
+        "• *All unused* — everything above + all images not used by a running container",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown",
+    )
+
+
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -161,6 +183,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"Restarting `{container}`…", parse_mode="Markdown")
         result = restart_docker_container(container)
         await query.edit_message_text(result)
+
+    elif query.data == "cleanup:dangling":
+        await query.edit_message_text("🧹 Pruning dangling resources…")
+        result = docker_prune_dangling()
+        await query.edit_message_text(f"✅ Done:\n\n{result[:3800]}")
+
+    elif query.data == "cleanup:all":
+        await query.edit_message_text("🗑️ Pruning all unused resources…")
+        result = docker_prune_all()
+        await query.edit_message_text(f"✅ Done:\n\n{result[:3800]}")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -201,6 +233,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("docker", cmd_docker))
     app.add_handler(CommandHandler("restart", cmd_restart))
+    app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("network", cmd_network))
     app.add_handler(CommandHandler("ports", cmd_ports))
     app.add_handler(CallbackQueryHandler(callback_handler))
