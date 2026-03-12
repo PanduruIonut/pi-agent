@@ -1,0 +1,16 @@
+[Unit]
+Description=Pi Agent (Telegram bot + Web API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/pi-agent
+EnvironmentFile=/home/pi/pi-agent/.env
+ExecStart=/home/pi/pi-agent/venv/bin/python main.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
