@@ -12,9 +12,11 @@ Any other text is forwarded to the AI agent as a free-form question.
 
 import os
 import logging
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import subprocess
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from agent import ask
+from tools import restart_docker_container
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +64,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Pi Agent online!\n\n"
         "Commands:\n"
-        "  /status — system overview\n"
-        "  /docker — Docker containers\n"
-        "  /help   — this message\n\n"
+        "  /status           — system overview\n"
+        "  /docker           — Docker containers\n"
+        "  /restart <name>   — restart a container\n"
+        "  /network          — devices on the network\n"
+        "  /ports            — exposed ports\n"
+        "  /help             — this message\n\n"
         "Or just ask me anything about your Pi."
     )
 
@@ -87,6 +92,75 @@ async def cmd_docker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Checking Docker…")
     response = await ask("Check all Docker containers. Report their status, resource usage, and flag any that are stopped or unhealthy.")
     await send(update, response)
+
+
+async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update):
+        return
+    if not context.args:
+        # List running containers to pick from
+        result = subprocess.run(
+            "docker ps --format '{{.Names}}\t{{.Status}}'",
+            shell=True, capture_output=True, text=True
+        )
+        lines = result.stdout.strip().splitlines()
+        if not lines:
+            await update.message.reply_text("No running containers found.")
+            return
+        container_list = "\n".join(f"  • {l.split(chr(9))[0]}" for l in lines)
+        await update.message.reply_text(
+            f"Usage: `/restart <container_name>`\n\nRunning containers:\n{container_list}",
+            parse_mode="Markdown"
+        )
+        return
+
+    container = context.args[0]
+    keyboard = [[
+        InlineKeyboardButton("✅ Yes, restart", callback_data=f"restart:{container}"),
+        InlineKeyboardButton("❌ Cancel", callback_data="cancel"),
+    ]]
+    await update.message.reply_text(
+        f"Restart container `{container}`?",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+
+async def cmd_network(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update):
+        return
+    await update.message.reply_text("Scanning network…")
+    response = await ask(
+        "Scan the local network for connected devices and list them with IP and MAC. "
+        "Also show the current public IP address."
+    )
+    await send(update, response)
+
+
+async def cmd_ports(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update):
+        return
+    await update.message.reply_text("Checking exposed ports…")
+    response = await ask(
+        "List all listening ports on this system. For each port, identify what "
+        "service or process is using it."
+    )
+    await send(update, response)
+
+
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "cancel":
+        await query.edit_message_text("Cancelled.")
+        return
+
+    if query.data.startswith("restart:"):
+        container = query.data[8:]
+        await query.edit_message_text(f"Restarting `{container}`…", parse_mode="Markdown")
+        result = restart_docker_container(container)
+        await query.edit_message_text(result)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -126,5 +200,9 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("docker", cmd_docker))
+    app.add_handler(CommandHandler("restart", cmd_restart))
+    app.add_handler(CommandHandler("network", cmd_network))
+    app.add_handler(CommandHandler("ports", cmd_ports))
+    app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     return app

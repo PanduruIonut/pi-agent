@@ -4,6 +4,7 @@ Runs commands locally via subprocess (no SSH needed — this runs on the Pi itse
 """
 
 import subprocess
+import urllib.request
 from typing import Tuple
 
 # Commands (or prefixes) permitted by run_command.
@@ -217,6 +218,33 @@ TOOL_SCHEMAS = [
         },
     },
     {
+        "name": "get_docker_logs_filtered",
+        "description": "Get recent Docker container logs filtered to only show errors, warnings, exceptions, and fatal messages.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "container": {"type": "string", "description": "Container name"},
+                "lines": {"type": "integer", "description": "Number of recent log lines to scan (default 200)", "default": 200},
+            },
+            "required": ["container"],
+        },
+    },
+    {
+        "name": "get_network_devices",
+        "description": "Scan the local network and list all connected devices with their IP and MAC addresses.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_exposed_ports",
+        "description": "List all listening/exposed ports on this system and which processes own them.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_public_ip",
+        "description": "Get the current public IP address of this machine.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
         "name": "run_command",
         "description": (
             "Run a shell command on the Pi. Only safe read-only commands "
@@ -233,6 +261,53 @@ TOOL_SCHEMAS = [
 ]
 
 
+def restart_docker_container(container_name: str) -> str:
+    # Verify container exists first
+    stdout, _, rc = _run(f"docker ps -a --format '{{{{.Names}}}}' | grep -x '{container_name}'")
+    if rc != 0 or not stdout.strip():
+        return f"Container '{container_name}' not found."
+    stdout, stderr, rc = _run(f"docker restart {container_name}")
+    if rc != 0:
+        return f"Failed to restart '{container_name}': {stderr.strip()}"
+    return f"✅ Container '{container_name}' restarted successfully."
+
+
+def get_docker_logs_filtered(container: str, lines: int = 200) -> str:
+    stdout, stderr, rc = _run(f"docker logs --tail {lines} {container} 2>&1")
+    if rc != 0 and not stdout:
+        return f"Error: {stderr.strip()}"
+    keywords = ("error", "warn", "exception", "fatal", "critical", "traceback", "panic")
+    filtered = [l for l in stdout.splitlines() if any(kw in l.lower() for kw in keywords)]
+    if not filtered:
+        return f"No errors or warnings found in the last {lines} lines of '{container}'."
+    return f"{len(filtered)} error/warning lines in '{container}':\n\n" + "\n".join(filtered[-50:])
+
+
+def get_network_devices() -> str:
+    # Try arp-scan first (more detailed), fall back to arp -a
+    stdout, _, rc = _run("sudo arp-scan --localnet 2>/dev/null")
+    if rc != 0 or not stdout.strip():
+        stdout, _, _ = _run("arp -a")
+    return stdout.strip() or "No devices found."
+
+
+def get_exposed_ports() -> str:
+    stdout, _, _ = _run("ss -tlnp")
+    return stdout.strip()
+
+
+def get_public_ip() -> str:
+    try:
+        with urllib.request.urlopen("https://ifconfig.me", timeout=5) as r:
+            return r.read().decode().strip()
+    except Exception:
+        try:
+            with urllib.request.urlopen("https://api.ipify.org", timeout=5) as r:
+                return r.read().decode().strip()
+        except Exception as e:
+            return f"Could not determine public IP: {e}"
+
+
 def dispatch(tool_name: str, tool_input: dict) -> str:
     match tool_name:
         case "get_system_info":
@@ -247,5 +322,13 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
             return get_logs(tool_input["source"], tool_input.get("lines", 50))
         case "run_command":
             return run_command(tool_input["command"])
+        case "get_docker_logs_filtered":
+            return get_docker_logs_filtered(tool_input["container"], tool_input.get("lines", 200))
+        case "get_network_devices":
+            return get_network_devices()
+        case "get_exposed_ports":
+            return get_exposed_ports()
+        case "get_public_ip":
+            return get_public_ip()
         case _:
             return f"Unknown tool: {tool_name}"

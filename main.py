@@ -33,12 +33,34 @@ async def run_api():
 
 async def run_bot():
     from bot import build_app
+    from monitor import Monitor
+
     app = build_app()
+
+    # Wire monitor → Telegram: send alerts to all allowed chat IDs
+    allowed_ids = [
+        int(i.strip())
+        for i in os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
+        if i.strip().isdigit()
+    ]
+
+    async def send_alert(text: str):
+        for chat_id in allowed_ids:
+            try:
+                await app.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+            except Exception as e:
+                logger.warning("Failed to send alert to %s: %s", chat_id, e)
+
+    monitor = Monitor(send_fn=send_alert)
+
     logger.info("Starting Telegram bot")
     async with app:
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
-        await asyncio.Event().wait()  # run forever
+        await asyncio.gather(
+            asyncio.Event().wait(),  # run forever
+            monitor.run(),
+        )
         await app.updater.stop()
         await app.stop()
 
